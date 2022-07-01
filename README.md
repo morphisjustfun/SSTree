@@ -4,8 +4,11 @@
 
 - Berrospi, Luis
 - Huby, Jose
-- Rubio, Ignacio
 - Rios, Mario
+
+## Try it out
+
+Just visit the [Project webpage](https://ss-tree-morphisjustfun.vercel.app).
 
 ## Running the project
 
