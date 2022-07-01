@@ -3,9 +3,9 @@ const maxPoints = 3;
 
 export const equalArrays = <T, >(a: T[], b: T[]): boolean => {
     if (a.length !== b.length) return false;
-    a.forEach((item, index) => {
-        if (item !== b[index]) return false;
-    });
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
     return true;
 }
 
@@ -235,6 +235,47 @@ class SSNode {
         return directionIndex;
     }
 
+    static delete(node: SSNode, target: number[]): any {
+        if (node.leaf) {
+            const findNode = node.points.find((point) => equalArrays<number>(point, target));
+            if (findNode) {
+                node.points = node.points.filter((point) => !equalArrays<number>(point, target));
+                node.updateBoundingEnvelope();
+                return [true, node.points.length < minPoints];
+            }
+            return [false, false];
+        }
+        let nodeToFix = null;
+        let deleted = false;
+        for (let i = 0; i < node.children.length; i++) {
+            const child = node.children[i];
+            if (child.intersectsPoint(target)) {
+                const [deletedChild, deletedChildNeedsFixing] = SSNode.delete(child, target);
+                deleted = deletedChild;
+                if (deletedChildNeedsFixing) {
+                    nodeToFix = child;
+                }
+                if (deleted) {
+                    break;
+                }
+            }
+        }
+        if (nodeToFix === null) {
+            if (deleted) {
+                node.updateBoundingEnvelope();
+            }
+            return [deleted, false];
+        }
+        const siblings = node.siblingsToBorrowFrom(nodeToFix);
+        if (siblings.length !== 0) {
+            nodeToFix.borrowFromSibling(siblings);
+        } else {
+            node.mergeChildren(nodeToFix, node.findSiblingToMergeTo(nodeToFix));
+        }
+        node.updateBoundingEnvelope();
+        return [true, node.children.length < minPoints];
+    }
+
     static dfs(node: SSNode, nodes: SSNode[], points: number[][]): void {
         nodes.push(node);
         if (node.leaf) {
@@ -244,6 +285,144 @@ class SSNode {
         node.children.forEach((child) => {
             SSNode.dfs(child, nodes, points);
         });
+    }
+
+    private siblingsToBorrowFrom(nodeToFix: SSNode): SSNode[] {
+        const siblings = this.children.filter((child) => child !== nodeToFix);
+        return siblings.filter((child) => child.children.length > minPoints || child.points.length > minPoints);
+    }
+
+    private borrowFromSibling(siblings: SSNode[]) {
+        const [closestEntry, closestSibling] = SSNode.findClosestEntryInNodesList(siblings, this);
+        SSNode.deleteEntry(closestSibling, closestEntry);
+        closestSibling.updateBoundingEnvelope();
+        SSNode.addEntry(this, closestEntry);
+        this.updateBoundingEnvelope();
+    }
+
+    static addEntry(node: SSNode, entry: SSNode | number[]) {
+        if (entry instanceof SSNode) {
+            node.children.push(entry);
+            return;
+        }
+        node.points.push(entry);
+    }
+
+    static deleteEntry(node: SSNode, entry: SSNode | number[]) {
+        if (entry instanceof SSNode) {
+            node.children = node.children.filter((child) => child !== entry);
+            return;
+        }
+        node.points = node.points.filter((point) => !equalArrays<number>(point, entry));
+    }
+
+    static findClosestEntryInNodesList(nodes: SSNode[], target: SSNode): [SSNode | number[], SSNode] {
+        let closestEntry: number[] | SSNode | null = null;
+        let closestNode: SSNode | null = null;
+
+        nodes.forEach((node) => {
+            const closestEntryInNode = node.getClosestCentroidTo(target);
+            if (SSNode.closerThan(closestEntryInNode, closestEntry, target)) {
+                closestEntry = closestEntryInNode;
+                closestNode = node;
+            }
+        });
+
+        return [closestEntry as unknown as (SSNode | number[]), closestNode as unknown as SSNode];
+    }
+
+    static closerThan(node1: SSNode, node2: number[] | SSNode | null, target: SSNode) {
+        if (node2 === null) return true;
+        if (node2 instanceof SSNode) {
+            const distance1 = SSNode.distance(node1.centroid, target.centroid);
+            const distance2 = SSNode.distance(node2.centroid, target.centroid);
+            return distance1 < distance2;
+        } else {
+            const distance1 = SSNode.distance(node1.centroid, target.centroid);
+            const distance2 = SSNode.distance(node2, target.centroid);
+            return distance1 < distance2;
+        }
+    }
+
+    private getClosestCentroidTo(target: SSNode): SSNode {
+        // from this node, get the entry which is closest to target. Entry
+        // means a point in a leaf and a node in an internal node
+        if (this.leaf) {
+            let closestEntryInNode = null;
+            let closestDistance = Number.POSITIVE_INFINITY;
+            this.points.forEach((entry) => {
+                const distance = SSNode.distance(entry, target.centroid);
+                if (distance < closestDistance) {
+                    closestEntryInNode = entry;
+                    closestDistance = distance;
+                }
+            });
+            return closestEntryInNode as unknown as SSNode;
+        } else {
+            let closestNodeInNode = null;
+            let closestDistance = Number.POSITIVE_INFINITY;
+            this.children.forEach((node) => {
+                const distance = SSNode.distance(node.centroid, target.centroid);
+                if (distance < closestDistance) {
+                    closestNodeInNode = node;
+                    closestDistance = distance;
+                }
+            });
+            return closestNodeInNode as unknown as SSNode;
+        }
+    }
+
+    private findSiblingToMergeTo(nodeToFix: SSNode): SSNode | null {
+        // this is the parent of nodeToFix
+        // find the sibling which children plus nodeToFix's children is less or equal to maxChildren
+        const candidates_siblings: SSNode[] = [];
+        this.children.forEach((child) => {
+            if (child === nodeToFix) return;
+            if (child.children.length + nodeToFix.children.length <= maxPoints)
+                candidates_siblings.push(child);
+        });
+
+        if (candidates_siblings.length === 0) {
+            return null;
+        }
+        // return the candidate whose centroid is closest to nodeToFix
+        candidates_siblings.sort((a, b) => {
+            const distanceA = SSNode.distance(a.centroid, nodeToFix.centroid);
+            const distanceB = SSNode.distance(b.centroid, nodeToFix.centroid);
+            return distanceA - distanceB;
+        });
+        return candidates_siblings[0];
+    }
+
+    private mergeChildren(firstChild: SSNode, secondChild: SSNode | null) {
+        if (firstChild === undefined) {
+            throw new Error("firstChild is undefined");
+        }
+        if (secondChild === null) return;
+
+        const newChild = SSNode.merge(firstChild, secondChild);
+        this.children = this.children.filter((child) => child !== firstChild);
+        this.children = this.children.filter((child) => child !== secondChild);
+        newChild.updateBoundingEnvelope();
+        // if (this.children.length === 0) {
+        //     this.leaf = true;
+        //     this.points = this.points.concat(newChild.points);
+        // } else {
+        this.children.push(newChild);
+        // }
+        this.updateBoundingEnvelope();
+    }
+
+    private static merge(firstNode: SSNode, secondNode: SSNode): SSNode {
+        if (firstNode.leaf !== secondNode.leaf) {
+            throw new Error("Can't merge leaf and internal node");
+        }
+
+        if (firstNode.leaf) {
+            return new SSNode(firstNode.dimension, [], firstNode.points.concat(secondNode.points), true);
+        } else {
+            return new SSNode(firstNode.dimension, firstNode.children.concat(secondNode.children), [], false);
+        }
     }
 }
 
@@ -268,6 +447,14 @@ export default class SSTree {
             const [newChild1, newChild2] = insertResult;
             this.root = new SSNode(this.dimension, [newChild1, newChild2], [], false);
             this.root.updateBoundingEnvelope();
+        }
+    }
+
+    delete(point: number[]) {
+        SSNode.delete(this.root, point);
+
+        if (this.root.children.length === 1) {
+            this.root = this.root.children[0];
         }
     }
 

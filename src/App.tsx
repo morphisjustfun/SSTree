@@ -3,6 +3,12 @@ import './App.css';
 import Two from 'two.js';
 import SSTree from "./core/SSTree";
 
+const getColor = () =>
+    "hsl(" + 360 * Math.random() + ',' +
+    (25 + 70 * Math.random()) + '%,' +
+    (85 + 10 * Math.random()) + '%)'
+
+
 const drawSSTree = (two: Two, ssTree: SSTree) => {
     two.clear();
     // make circle transparent, only draw the outline
@@ -10,10 +16,12 @@ const drawSSTree = (two: Two, ssTree: SSTree) => {
 
     nodes.forEach((node) => {
         if (node === ssTree.root) return;
-        two.makeCircle(node.centroid[0], node.centroid[1], node.radius).fill = 'transparent';
+        const circle = two.makeCircle(node.centroid[0], node.centroid[1], node.radius);
+        circle.fill = 'transparent';
+        circle.stroke = getColor();
     });
     points.forEach((point) => {
-        two.makeCircle(point[0], point[1], 2).fill = '#ff0000';
+        two.makeCircle(point[0], point[1], 3).fill = '#ff0000';
     });
     two.update();
 }
@@ -24,7 +32,7 @@ const App = () => {
     const currentSSTree = useRef<SSTree>(null);
     const two = useRef(new Two({
         fullscreen: true,
-        autostart: true,
+        autostart: true
     }));
     const [dummyState, setDummyState] = useState(0);
 
@@ -40,7 +48,8 @@ const App = () => {
             currentSSTree.current = new SSTree(2, [x, y]);
             setDummyState(dummyState + 1);
         } else {
-            const [nodes, points] = currentSSTree.current!.dfs();
+            const dfs = currentSSTree.current!.dfs();
+            const points = dfs[1];
 
             // check if the click is inside any of the nodes with a tolerance of +- 5
             const pointsAlreadyAdded: number[][] = [];
@@ -49,8 +58,15 @@ const App = () => {
                     pointsAlreadyAdded.push(point);
                 }
             });
-            currentSSTree.current.insert([x, y]);
-            setDummyState(dummyState + 1);
+            if (pointsAlreadyAdded.length === 0) {
+                currentSSTree.current.insert([x, y]);
+                setDummyState(dummyState + 1);
+            }
+            else {
+                // remove the point from the tree
+                currentSSTree.current.delete(pointsAlreadyAdded[0]);
+                setDummyState(dummyState + 1);
+            }
         }
     }
 
